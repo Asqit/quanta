@@ -1,0 +1,16 @@
+{
+    "python.analysis.extraPaths": [
+        "path/to/site-packages/micropython_esp32_stubs",
+        "~/.micropico-stubs/included"
+    ],
+    "python.languageServer": "Pylance",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingModuleSource": "none"
+    },
+    "python.terminal.activateEnvironment": false,
+    "micropico.openOnStart": true,
+    "python.analysis.typeshedPaths": [
+        "~/.micropico-stubs/included"
+    ]
+}

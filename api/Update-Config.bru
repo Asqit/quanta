@@ -1,0 +1,33 @@
+meta {
+  name: Update-Config
+  type: http
+  seq: 2
+}
+
+post {
+  url: 192.168.4.1/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "timing": {
+      "work": 25,
+      "short_break": 5,
+      "long_break": 15
+    },
+    "behavior": {
+      "auto_start_breaks": false,
+      "auto_start_work": false
+    },
+    "settings": {
+      "sounds": true
+    }
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
