@@ -1,14 +1,53 @@
 # ~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~ #
 # A Pomodoro timer made with MicroPython on ESP32s
 # ~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~ #
+#
+# TODO:
+#   1. Unify the UI
+#   1.1. Single separator for all screens (Main-Content <-> Controls/Hint)
+#   1.2. Single style ~ Gfx > text... more animations
+#   1.3. IDLE: Coffee animation (steamy part)
+#   1.4. WORK: Something progresive (digging a hole...)
+#   1.5. BREAK: Quick break, but reminder that we are not finished yet
+#   1.6. LBREAK: REWARD time!!! (jackpot maybe :D)
+#   1.7. PAUSE: V. Insanity (world is stopped)
+#   1.8. WAIT_W/B: Hyping user
+# ~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~ #
 from machine import Pin, I2C, PWM
 from ssd1306 import SSD1306_I2C, framebuf
+import framebuf
 import network
 import socket
 import json
 import time
 import sys
 import os
+
+
+image_clock_bits = bytearray(
+    b"\x00?\xf0\x00\x00?\xf0\x00\x03\xc0\x0f\x00\x03\xc0\x0f\x00\x0c\xc3\x0c\xc0\x0c\xc3\x0c\xc00\x03\x0000\x03\x000<\x03\x00\xf0<\x03\x00\xf0\xc0\x03\x00\x0c\xc0\x03\x00\x0c\xc0\x03\x00\x0c\xc0\x03\x00\x0c\xfc\x03\x00\xfc\xfc\x03\x00\xfc\xc0\x00\xc0\x0c\xc0\x00\xc0\x0c\xc0\x000\x0c\xc0\x000\x0c<\x00\x0c\xf0<\x00\x0c\xf00\x00\x0000\x00\x000\x0c\xc3\x0c\xc0\x0c\xc3\x0c\xc0\x03\xc3\x0f\x00\x03\xc3\x0f\x00\x00?\xf0\x00\x00?\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+)
+image_clockface_bits = bytearray(
+    b"\x00?\xf0\x00\x00?\xf0\x00\x03\xc3\x0f\x00\x03\xc3\x0f\x00\x0c\xc3\x0c\xc0\x0c\xc3\x0c\xc00\x00\x0000\x00\x000<\x00\x00\xf0<\x00\x00\xf0\xc0\x00\x00\x0c\xc0\x00\x00\x0c\xc0\x00\x00\x0c\xc0\x00\x00\x0c\xfc\x03\x00\xfc\xfc\x03\x00\xfc\xc0\x00\x00\x0c\xc0\x00\x00\x0c\xc0\x00\x00\x0c\xc0\x00\x00\x0c<\x00\x00\xf0<\x00\x00\xf00\x00\x0000\x00\x000\x0c\xc3\x0c\xc0\x0c\xc3\x0c\xc0\x03\xc3\x0f\x00\x03\xc3\x0f\x00\x00?\xf0\x00\x00?\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+)
+
+image_coffee_bits = bytearray(
+    b"\x10\x00\x00\x00\x08\x00\x10\x00"
+    b"\x02\x00\x04\x00\x12\x00\x10\x00"
+    b"\x04\x00\x0a\x00\x07\x80\x0b\x60"
+    b"\x00\x00\x1f\xf0\x75\x50\x9a\xb0"
+    b"\x91\x10\x90\x10\x90\x10\x98\x30"
+    b"\x54\x50\x3a\xb0\x35\x50\x1a\xb0"
+    b"\x0f\xe0"
+)
+
+virtual_insanity = bytearray(
+    b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x00\x00\xff\xc0\x00\x00\x00\x01\xff\xe0\x00\x00\x00\x01\xff\xe0\x00\x00\x00\x01\xff\xe0\x00\x00\x00\x01\xff\xf0\x00\x00\x00\x01\xff\xf0\x00\x00\x00\x03\xff\xe0\x00\x00\x00\x03\xff\xf8\x00\x00\x00\x03\xff\xfe\x00\x00\x00\x03\xff\xff\x00\x00\x00\x07\xff\xff\x00\x00\x00\x0f\xff\xfe\x00\x00\x00\x1f\xff\xfc\x00\x00\x00\x1f\xff\xf8\x00\x00\x00\x1f\xff\xfc\x00\x00\x00\x0f\xff\xfe\x00\x00\x00\x07\xff\xff\x00\x00\x00\x00?\xff\x00\x00\x00\x00?\xff\xc0\x00\x00\x00\xff\xff\xf0\x00\x00\x06\xff\xff\xfc\x00\x00\x03\xff\xff\xfe\x00\x00\x0f\xff\xff\xff\x00\x00\x1f\xff\xff\xff\x00\x00?\xff\xff\xff\x80\x00?\xff\xff\xff\xe0\x00?\xff\xff\xff\xf0\x00\x7f\xff\xff\xff\xf8\x00\x7f\xff\xff\xff\xfe\x00\x7f\xff\xff\xff\xff\x00\x7f\xff\xff\xff\xff\x80\xff\xff\xff\xff\xff\xe0\x7f\xff\xff\xff\xff\xf0\x7f\x7f\xff\xff\xff\xf8~\x7f\xff\xff\xff\xf8\x1c\x7f\xff\xff\xff\xfc\x00?\xff\xff\xff\xfc\x00?\xff\xff\xff\xfe\x00?\xff\xff\xff\xfe\x00?\xff\xff\xff\xfe\x00?\xff\xff\x7f\xfe\x00?\xff\xff?\xfe\x00?\xff\xff\x1f\xff\x00?\xff\xff\x1f\xff\x00?\xff\xff\x1f\xff\x00?\xff\xff\x0f\xff\x00?\xff\xff\x0f\xff\x00?\xff\xff\x07\xff\x00\x1f\xff\xff\x03\xfe\x00\x1f\xff\xff\x07\xfe\x00\x1f\xff\xff\x03\xff\x00\x1f\xff\xff\x03\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+)
+
+image_play_bits = bytearray(
+    b"?\xff\x80@\x00@\x80\x00 \x80\x00 \x81\x80 \x81\xc0 \x81\xe0 \x81\xf0 \x81\xf8 \x81\xfc \x81\xf8 \x81\xf0 \x81\xe0 \x81\xc0 \x81\x80 \x80\x00 \x80\x00 \xc0\x00`\x7f\xff\xc0?\xff\x80"
+)
 
 
 # ----------------------------------------------------------------------------------------->> Misc. ~utilities
@@ -512,23 +551,19 @@ class UI:
     @staticmethod
     def splash_screen(oled: SSD1306_I2C, cfg: UiCfg):
         """Boot screen with title and version"""
-        f1_width = len("\ (^_^) /") * 8 * 3
-        f2_width = len("\^o^/") * 8 * 3
-        x1 = (128 - f1_width) // 2
-        x2 = (128 - f2_width) // 2
-        emoticons = ["\ (^_^) /", "\^o^/"]
-        x_positions = [x1, x2]
+        bits = [
+            framebuf.FrameBuffer(image_clock_bits, 30, 32, framebuf.MONO_HLSB),
+            framebuf.FrameBuffer(image_clockface_bits, 30, 32, framebuf.MONO_HLSB),
+        ]
 
-        for _ in range(4):
+        for _ in range(3):
             idx = _ % 2
-            oled_text_scaled(oled, emoticons[idx], x_positions[idx], 24, 3, 8, 8)
+            oled.fill(0)
+            oled.text("Quanta", 45, 26, 1)
+            oled.text("pomodoro", 45, 36, 1)
+            oled.blit(bits[idx], 13, 16)
             oled.show()
             time.sleep(1)
-            oled.fill(0)
-
-        UI.center_text(oled, "POMODORO", 10)
-        UI.center_text(oled, "Timer", 36)
-        oled.show()
 
     @staticmethod
     def idle_screen(oled: SSD1306_I2C, cfg: UiCfg):
@@ -540,11 +575,14 @@ class UI:
             oled.pixel(127 - i, 0, 0)
 
         # READY text centered
-        UI.center_text(oled, "READY", 20)
+        UI.center_text(oled, "Ready to get", 20)
+        UI.center_text(oled, "  things DONE?", 30)
 
         # Coffee cup icon
-        UI.center_text(oled, "`", 32)
-        oled.text(" c[]", 42, 38)
+        coffee_bits = framebuf.FrameBuffer(
+            image_coffee_bits, 12, 25, framebuf.MONO_HLSB
+        )
+        oled.blit(coffee_bits, 12, 32)
 
         # Bottom border with button hints
         UI.draw_line(oled, 56)
@@ -639,21 +677,17 @@ class UI:
     @staticmethod
     def pause_screen(oled: SSD1306_I2C, cfg: UiCfg):
         """Paused screen"""
-        # Header with pause symbol
-        UI.center_text(oled, "|| PAUSED ||", 0)
-        UI.draw_line(oled, 9)
+        # bg_f8f8f8_flat_750x_075_f_pad_750x1000_f8f8f8
+        vi_bits = framebuf.FrameBuffer(virtual_insanity, 48, 64, framebuf.MONO_HLSB)
+        oled.blit(vi_bits, 2, -5)
+        oled.text("PAUSED", 62, 37, 1)
+        oled.line(0, 54, 127, 54, 1)
 
-        # Large timer
-        time_str = f"{cfg.minutes:02d}:{cfg.seconds:02d}"
-        oled_text_scaled(oled, time_str, 10, 15, 3, 8, 8)
-
-        # Pause icon
-        UI.center_text(oled, "|| ||", 42)
-
-        # Bottom controls
-        UI.draw_line(oled, 52)
-        oled.text("[A]STOP [B]RESET", 0, 56)
-
+        fb_image_play_bits = framebuf.FrameBuffer(
+            image_play_bits, 19, 20, framebuf.MONO_HLSB
+        )
+        oled.blit(fb_image_play_bits, 76, 13)
+        oled.text("[A]STOP", 0, 56)
         oled.show()
 
 
@@ -723,7 +757,6 @@ while True:
             hw.play_sound("celebration")
             hw.oled.fill(0)
             UI.splash_screen(hw.oled, UiCfg(pomodoro.state, 0, 0, pomodoro.pomodoros))
-            time.sleep(1)
             pomodoro.start()
         elif pomodoro.state == POMODORO_STATES.PAUSE:
             hw.play_sound("resume")
