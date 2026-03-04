@@ -1,5 +1,7 @@
 # Quanta
 
+![repo](./repo/repo.webp)
+
 A Pomodoro timer built with MicroPython for ESP32 microcontrollers, featuring an OLED display, physical buttons, and web-based configuration.
 
 ## Features
@@ -39,17 +41,17 @@ Settings can be modified via HTTP POST to the device:
 
 ```json
 {
-  "timing": {
-    "work": 25,
-    "short_break": 5,
-    "long_break": 15
-  },
-  "behavior": {
-    "auto_start_breaks": false,
-    "auto_start_work": false
-  },
-  "settings": {
-    "sounds": true
-  }
+    "timing": {
+        "work": 25,
+        "short_break": 5,
+        "long_break": 15
+    },
+    "behavior": {
+        "auto_start_breaks": false,
+        "auto_start_work": false
+    },
+    "settings": {
+        "sounds": true
+    }
 }
 ```

@@ -4,14 +4,15 @@
 #
 # TODO:
 #   1. Unify the UI
-#   1.1. Single separator for all screens (Main-Content <-> Controls/Hint)
-#   1.2. Single style ~ Gfx > text... more animations
-#   1.3. IDLE: Coffee animation (steamy part)
-#   1.4. WORK: Something progresive (digging a hole...)
-#   1.5. BREAK: Quick break, but reminder that we are not finished yet
-#   1.6. LBREAK: REWARD time!!! (jackpot maybe :D)
-#   1.7. PAUSE: V. Insanity (world is stopped)
-#   1.8. WAIT_W/B: Hyping user
+#       1.1. Single separator for all screens (Main-Content <-> Controls/Hint)
+#       1.2. Single style ~ Gfx > text... more animations
+#       1.3. IDLE: Coffee animation (steamy part)
+#       1.4. WORK: Something progresive (digging a hole...)
+#       1.5. BREAK: Quick break, but reminder that we are not finished yet
+#       1.6. LBREAK: REWARD time!!! (jackpot maybe :D)
+#       1.7. PAUSE: V. Insanity (world is stopped)
+#       1.8. WAIT_W/B: Hyping user
+#   2. Auto redirect connected users to HTML config page
 # ~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~ #
 from machine import Pin, I2C, PWM
 from ssd1306 import SSD1306_I2C, framebuf
@@ -81,13 +82,6 @@ def oled_text_scaled(
             pixel = temp_fb.pixel(i, j)
             if pixel:  # If the pixel is set, draw a larger rectangle
                 oled.fill_rect(x + i * scale, y + j * scale, scale, scale, 1)
-
-
-def create_access_point() -> network.WLAN:
-    ap = network.WLAN(network.AP_IF)
-    ap.active(True)
-    ap.config(essid="pomodoro-esp32s", password="SECRET")
-    return ap
 
 
 SOUNDS = {
@@ -421,6 +415,7 @@ class Hardware:
         self.oled = SSD1306_I2C(128, 64, self.i2c)
         self.prev_start_btn = 1  # Not pressed initially
         self.prev_reset_btn = 1
+        self.is_powersave = False
 
     def read_start_btn(self) -> bool:
         current = self.start_btn.value()
@@ -438,11 +433,23 @@ class Hardware:
         self.prev_reset_btn = current
         return False
 
+    def power_save(self):
+        self.is_powersave = True
+        self.oled.contrast(2)
+
+    def wake_up(self):
+        self.is_powersave = False
+        self.oled.contrast(255)
+
     def update_display(self, state, minutes, seconds, pomodoros):
         cfg = UiCfg(state, minutes, seconds, pomodoros)
         self.oled.fill(0)
 
+        if self.is_powersave and state is not POMODORO_STATES.IDLE:
+            self.wake_up()
+
         if cfg.state == POMODORO_STATES.IDLE:
+            self.power_save()
             UI.idle_screen(self.oled, cfg)
         elif cfg.state == POMODORO_STATES.WORK:
             UI.work_screen(self.oled, cfg)
@@ -487,6 +494,87 @@ class UiCfg:
         self.minutes = minutes
         self.seconds = seconds
         self.pomodoros = pomodoros
+
+
+# ----------------------------------------------------------------------------------------->> HTTP Server
+class HttpServer:
+    def __init__(self, port=80):
+        self.port = port
+        self.ap = None
+        self.socket = None
+
+    def start(self):
+        if self.ap is not None:
+            return
+        self.ap = network.WLAN(network.AP_IF)
+        self.ap.active(True)
+        self.ap.config(essid="pomodoro-esp32s", password="SECRET")
+        addr = socket.getaddrinfo("0.0.0.0", self.port)[0][-1]
+        self.socket = socket.socket()
+        self.socket.bind(addr)
+        self.socket.listen(1)
+        self.socket.setblocking(False)
+
+    def stop(self):
+        if self.socket:
+            self.socket.close()
+            self.socket = None
+        if self.ap:
+            self.ap.active(False)
+            self.ap = None
+
+    def is_active(self):
+        return self.socket is not None
+
+    def handle_request(self, pomodoro_instance):
+        try:
+            cl, addr = self.socket.accept()
+            request = cl.recv(1024).decode()
+
+            if "POST /" in request:
+                try:
+                    parts = request.split("\r\n\r\n")
+                    if len(parts) < 2:
+                        raise ValueError("No body")
+                    body = parts[1]
+                    if not body.strip():
+                        raise ValueError("Empty body")
+                    data = json.loads(body)
+                    config = Config.from_dict(data)
+                    Config.save_config(config)
+                    response = json.dumps({"status": "success"})
+                    cl.send(
+                        "HTTP/1.1 201 CREATED\r\nContent-Type: application/json\r\n\r\n"
+                    )
+                    cl.send(response)
+                    return True
+                except (ValueError, Exception) as e:
+                    error_response = json.dumps({"error": str(e)})
+                    cl.send(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\r\n"
+                    )
+                    cl.send(error_response)
+            elif "GET /config" in request:
+                config = Config.get_config()
+                response = json.dumps(
+                    {
+                        "work": config.timing.work // 60,
+                        "short_break": config.timing.short_break // 60,
+                        "long_break": config.timing.long_break // 60,
+                        "auto_start_breaks": config.behavior.auto_start_breaks,
+                        "auto_start_work": config.behavior.auto_start_work,
+                        "sounds": config.settings.sounds,
+                    }
+                )
+                cl.send("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n")
+                cl.send(response)
+            elif "GET /" in request:
+                cl.send("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n")
+                cl.send(open("min.html").read())
+            cl.close()
+        except OSError:
+            pass
+        return False
 
 
 # ----------------------------------------------------------------------------------------->> UI
@@ -693,63 +781,11 @@ class UI:
 
 hw = Hardware()
 pomodoro = Pomodoro()
-
-ap = create_access_point()
-addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
-s = socket.socket()
-s.bind(addr)
-s.listen(1)
-s.setblocking(False)
+server = HttpServer()
 
 while True:
-    # non-blocking http server
-    try:
-        cl, addr = s.accept()
-        request = cl.recv(1024).decode()
-        if "POST /" in request:
-            try:
-                parts = request.split("\r\n\r\n")
-                if len(parts) < 2:
-                    raise ValueError("No body")
-
-                body = parts[1]
-                if not body.strip():
-                    raise ValueError("Empty body")
-
-                data = json.loads(body)
-                config = Config.from_dict(data)
-                Config.save_config(config)
-                pomodoro = Pomodoro()
-
-                response = json.dumps({"status": "success"})
-                cl.send(
-                    "HTTP/1.1 201 CREATED\r\nContent-Type: application/json\r\n\r\n"
-                )
-                cl.send(response)
-
-            except (ValueError, Exception) as e:
-                error_response = json.dumps({"error": str(e)})
-                cl.send(
-                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\r\n"
-                )
-                cl.send(error_response)
-        elif "GET /config" in request:
-            config = Config.get_config()
-            response = json.dumps(
-                {
-                    "work": config.timing.work // 60,
-                    "short_break": config.timing.short_break // 60,
-                    "long_break": config.timing.long_break // 60,
-                    "auto_start_breaks": config.behavior.auto_start_breaks,
-                    "auto_start_work": config.behavior.auto_start_work,
-                    "sounds": config.settings.sounds,
-                }
-            )
-            cl.send("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n")
-            cl.send(response)
-        cl.close()
-    except OSError:
-        pass
+    if server.is_active() and server.handle_request(pomodoro):
+        pomodoro = Pomodoro()
 
     # Handle start/pause button
     if hw.read_start_btn():
@@ -782,3 +818,5 @@ while True:
     # Update display
     mins, secs = pomodoro.get_remaining_time()
     hw.update_display(pomodoro.state, mins, secs, pomodoro.pomodoros)
+
+    time.sleep(0.01)
